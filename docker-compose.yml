@@ -1,0 +1,26 @@
+services:
+  subscriber:
+    container_name: subscriber
+    build:
+      context: ./Subscriber
+    image: subscriber:latest
+    ports:
+      - "11000:11000/udp"
+    networks:
+      - udp-net
+
+  # publisher:
+  #   container_name: publisher
+  #   build:
+  #     context: ./Publisher
+  #   image: publisher:latest
+  #   environment:
+  #     - SUBSCRIBER_HOST=subscriber
+  #   depends_on:
+  #     - subscriber
+  #   networks:
+  #     - udp-net
+
+networks:
+  udp-net:
+    driver: bridge

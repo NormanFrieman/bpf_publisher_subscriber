@@ -1,0 +1,28 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+*.cache
+*.dll
+*.exe
+*.pdb
+*.nupkg
+
+# Build artifacts
+*.o
+*.so
+*.a
+xdp_manual
+
+# IDE
+.idea/
+.vscode/
+*.sln.DotSettings
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+*.tar
