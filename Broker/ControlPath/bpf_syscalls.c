@@ -1,12 +1,13 @@
+#include "bpf_syscalls.h"
+
 #include <stdio.h>
-#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
 #include <signal.h>
+#include <arpa/inet.h>
 #include <sys/syscall.h>
-#include <linux/bpf.h>
 #include <net/if.h>
 
 static inline int sys_bpf(int cmd, union bpf_attr *attr, unsigned int size) {
@@ -49,13 +50,15 @@ static inline int sys_bpf(int cmd, union bpf_attr *attr, unsigned int size) {
     BPF_RAW_INSN(BPF_LD | BPF_DW | BPF_IMM, DST, BPF_PSEUDO_MAP_FD, 0, MAP_FD), \
     BPF_RAW_INSN(0, 0, 0, 0, 0)
 
+// ---------------------------------------------------------------------
+
 int create_map(void) {
     union bpf_attr attr;
     memset(&attr, 0, sizeof(attr));
 
     attr.map_type = BPF_MAP_TYPE_HASH;
     attr.key_size = sizeof(char);
-    attr.value_size = sizeof(char[50]);
+    attr.value_size = sizeof(struct map_value);
     attr.max_entries = 1024;
 
     strncpy(attr.map_name, "pkt_count_map", sizeof(attr.map_name) - 1);
@@ -82,10 +85,6 @@ int load_prog(int map_fd) {
 
         BPF_EMIT_CALL(BPF_FUNC_map_lookup_elem),
 
-        BPF_JMP_IMM(BPF_JEQ, BPF_REG_0, 0, 2),
-        BPF_MOV64_IMM(BPF_REG_1, 1),
-        BPF_RAW_INSN(BPF_STX | BPF_XADD | BPF_DW, BPF_REG_0, BPF_REG_1, 0, 0),
-
         BPF_MOV64_IMM(BPF_REG_0, 2),
         BPF_EXIT_INSN(),
     };
@@ -96,16 +95,16 @@ int load_prog(int map_fd) {
     memset(&attr, 0, sizeof(attr));
 
     attr.prog_type = BPF_PROG_TYPE_XDP;
-    attr.insns = (uint64_t)prog;
+    attr.insns = (uint64_t)(unsigned long)prog;
     attr.insn_cnt = insn_cnt;
-    attr.license = (uint64_t)"GPL";
-    attr.log_buf = (uint64_t)log_buf;
+    attr.license = (uint64_t)(unsigned long)"GPL";
+    attr.log_buf = (uint64_t)(unsigned long)log_buf;
     attr.log_size = sizeof(log_buf);
     attr.log_level = 1;
 
     int prog_fd = sys_bpf(BPF_PROG_LOAD, &attr, sizeof(attr));
     if (prog_fd < 0) {
-        fprintf(stderr, "BPF_PROG_LOAD failed: %s\n", log_buf);
+        fprintf(stderr, "BPF_PROG_LOAD failed: %s\n%s\n", strerror(errno), log_buf);
         return -1;
     }
 
@@ -131,19 +130,24 @@ int attach_xdp_link(int prog_fd, int ifindex) {
     return link_fd;
 }
 
-int add_key_if_not_exists(int map_fd, char key, char* value) {
+int add_key_if_not_exists(int map_fd, char key) {
     union bpf_attr attr;
     memset(&attr, 0, sizeof(attr));
 
+    uint32_t key_u32 = (uint32_t)(unsigned char)key;
+
+    struct map_value value;
+    memset(&value, 0, sizeof(value));
+
     attr.map_fd = map_fd;
-    attr.key = &key;
-    attr.value = value;
+    attr.key = (uint64_t)(unsigned long)&key_u32;
+    attr.value = (uint64_t)(unsigned long)&value;
     attr.flags = BPF_NOEXIST;
 
     int ret = sys_bpf(BPF_MAP_UPDATE_ELEM, &attr, sizeof(attr));
     if (ret < 0) {
         if (errno == EEXIST) {
-            printf("Key %u already exists in the map.\n", key);
+            printf("Key %u already exists in the map.\n", key_u32);
             return 0;
         } else {
             perror("BPF_MAP_UPDATE_ELEM failed");
@@ -151,25 +155,52 @@ int add_key_if_not_exists(int map_fd, char key, char* value) {
         }
     }
 
-    printf("Key %u added to the map with value %s.\n", key, value);
+    printf("Key %u added to the map (empty value)\n", key_u32);
     return 1;
 }
 
-int update_key(int map_fd, char key, char* value) {
+int update_key(int map_fd, uint32_t key, char* ip_str, char* port_str) {
     union bpf_attr attr;
     memset(&attr, 0, sizeof(attr));
 
+    char* endptr;
+    errno = 0;
+    long port_long = strtol(port_str, &endptr, 10);
+
+    if (endptr == port_str || *endptr != '\0') {
+        fprintf(stderr, "porta invalida (nao numerica): %s\n", port_str);
+        return -1;
+    }
+    if (errno == ERANGE || port_long < 0 || port_long > 65535) {
+        fprintf(stderr, "porta fora do intervalo valido (0-65535): %s\n", port_str);
+        return -1;
+    }
+    uint16_t port = (uint16_t)port_long;
+
+    struct map_value mv;
+    memset(&mv, 0, sizeof(mv));
+
+    if (inet_pton(AF_INET, ip_str, &mv.ip) != 1) {
+        fprintf(stderr, "IP invalido: %s\n", ip_str);
+        return -1;
+    }
+    mv.port = port;
+
     attr.map_fd = map_fd;
-    attr.key = &key;
-    attr.value = &value;
+    attr.key = (uint64_t)(unsigned long)&key;
+    attr.value = (uint64_t)(unsigned long)&mv;
     attr.flags = BPF_EXIST;
 
     int ret = sys_bpf(BPF_MAP_UPDATE_ELEM, &attr, sizeof(attr));
     if (ret < 0) {
+        if (errno == ENOENT) {
+            printf("Key %u does not exist, cannot update.\n", key);
+            return 1;
+        }
         perror("BPF_MAP_UPDATE_ELEM failed");
         return -1;
     }
 
-    printf("Key %u updated in the map with value %s.\n", key, value);
+    printf("Key %u updated with %s:%u\n", key, ip_str, port);
     return 0;
 }

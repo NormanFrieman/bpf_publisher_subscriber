@@ -10,24 +10,47 @@
 #define PORT 10000
 #define BUFFER_SIZE 1024
 
-void setup_commands(char* buffer, int* map_fd) {
-    switch (buffer[0]) {
+/*
+    0 - Cria um novo map (publisher)
+    1 - Atualiza um map existente (subscriber)
+    2 - Publica uma mensagem (publisher)
+*/
+
+void create_new_map(char* buffer, int* map_fd, char key) {
+    printf("\nCommand 0 received: eBPF map publisher\n");
+    char value[sizeof(buffer - 2)];
+
+    strcpy(value, buffer + 2);
+    printf("%s\n", value);
+
+    add_key_if_not_exists(*map_fd, key);
+}
+
+void update_existing_map(char* buffer, int* map_fd, char key, struct sockaddr_in* client_addr) {
+    printf("\nCommand 1 received: eBPF map subscribe\n");
+
+    char ip_str[32];
+    char port_str[16];
+    snprintf(ip_str, sizeof(ip_str), "%s", inet_ntoa(client_addr->sin_addr));
+    snprintf(port_str, sizeof(port_str), "%d", ntohs(client_addr->sin_port));
+    printf("Client IP: %s, Port: %s\n", ip_str, port_str);
+
+    uint32_t key_u32 = (uint32_t)(unsigned char)key;
+    update_key(*map_fd, key_u32, ip_str, port_str);
+}
+
+void setup_commands(char* buffer, int* map_fd, struct sockaddr_in* client_addr) {
+    char command = buffer[0];
+    char key = buffer[1];
+    switch (command) {
         case '0':
-            printf("Command 0 received: eBPF map publisher\n");
-            char key = buffer[1];
-            char value[sizeof(buffer - 2)];
-
-            strcpy(value, buffer + 2);
-            printf("%s\n", value);
-
-            add_key_if_not_exists(*map_fd, key, value);
+            create_new_map(buffer, map_fd, key);
             break;
         case '1':
-            printf("Command 1 received: eBPF map subscribe\n");
-            // update_key(*map_fd, 1, 200);
+            update_existing_map(buffer, map_fd, key, client_addr);
             break;
         case '2':
-            printf("Command 2 received: message publishing\n");
+            printf("\nCommand 2 received: message publishing\n");
             break;
         default:
             printf("Unknown command received: %c\n", buffer[0]);
@@ -67,7 +90,7 @@ void listen_udp(char* buffer, int* sockfd, int* map_fd, struct sockaddr_in* clie
         printf("Received message: %s\n", buffer);
         printf("From client: %s:%d\n", inet_ntoa(client_addr->sin_addr), ntohs(client_addr->sin_port));
 
-        setup_commands(buffer, map_fd);
+        setup_commands(buffer, map_fd, client_addr);
     }
 
     close(*sockfd);
