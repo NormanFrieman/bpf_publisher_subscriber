@@ -2,6 +2,18 @@
 
 Broker publish/subscribe para mensagens UDP. O projeto usa eBPF/XDP para encaminhar publicações diretamente no datapath, evitando que elas sejam processadas pelo broker no user space.
 
+## Referência
+
+Este projeto foi baseado no artigo:
+
+> Beihao Zhou, Samer Al-Kiswany e Mina Tahmasbi Arashloo. 2025.  
+> **Toward eBPF-Accelerated Pub-Sub Systems.**  
+> 3rd Workshop on eBPF and Kernel Extensions (eBPF '25), pp. 38–44.  
+> [https://doi.org/10.1145/3748355.3748365](https://doi.org/10.1145/3748355.3748365)
+
+O artigo propõe separar o control path, executado no user space, do data path de
+encaminhamento de mensagens, acelerado no kernel com eBPF.
+
 ## Arquitetura
 
 O projeto possui quatro componentes:
