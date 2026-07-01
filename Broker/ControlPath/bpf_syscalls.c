@@ -8,7 +8,9 @@
 #include <signal.h>
 #include <arpa/inet.h>
 #include <sys/syscall.h>
+#include <sys/ioctl.h>
 #include <net/if.h>
+#include <linux/if_arp.h>
 
 static inline int sys_bpf(int cmd, union bpf_attr *attr, unsigned int size) {
     return syscall(__NR_bpf, cmd, attr, size);
@@ -16,8 +18,67 @@ static inline int sys_bpf(int cmd, union bpf_attr *attr, unsigned int size) {
 
 // ---------------------------------------------------------------------
 
-struct load_result load_prog(const char *obj_path) {
-    struct load_result res = { -1, -1, NULL };
+int get_interface_mac(const char *ifname, uint8_t mac[6]) {
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        perror("socket failed");
+        return -1;
+    }
+
+    struct ifreq ifr;
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, ifname, IFNAMSIZ - 1);
+
+    if (ioctl(sock, SIOCGIFHWADDR, &ifr) < 0) {
+        perror("SIOCGIFHWADDR failed");
+        close(sock);
+        return -1;
+    }
+
+    memcpy(mac, ifr.ifr_hwaddr.sa_data, 6);
+    close(sock);
+    return 0;
+}
+
+int get_arp_mac(const char *ifname, uint32_t ip, uint8_t mac[6]) {
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        perror("socket failed");
+        return -1;
+    }
+
+    struct arpreq req;
+    memset(&req, 0, sizeof(req));
+
+    struct sockaddr_in *sin = (struct sockaddr_in *)&req.arp_pa;
+    sin->sin_family = AF_INET;
+    sin->sin_addr.s_addr = ip;
+
+    strncpy(req.arp_dev, ifname, IFNAMSIZ - 1);
+
+    if (ioctl(sock, SIOCGARP, &req) < 0) {
+        struct sockaddr_in probe;
+        memset(&probe, 0, sizeof(probe));
+        probe.sin_family = AF_INET;
+        probe.sin_addr.s_addr = ip;
+        probe.sin_port = htons(11000);
+        sendto(sock, "", 0, 0, (struct sockaddr *)&probe, sizeof(probe));
+        usleep(100000);
+
+        if (ioctl(sock, SIOCGARP, &req) < 0) {
+            perror("SIOCGARP failed");
+            close(sock);
+            return -1;
+        }
+    }
+
+    memcpy(mac, req.arp_ha.sa_data, 6);
+    close(sock);
+    return 0;
+}
+
+struct load_result load_prog(const char *obj_path, const char *ifname) {
+    struct load_result res = { -1, -1, -1, NULL };
 
     struct bpf_object *obj = bpf_object__open_file(obj_path, NULL);
     if (!obj) {
@@ -45,21 +106,66 @@ struct load_result load_prog(const char *obj_path) {
         return res;
     }
 
+    struct bpf_map *cfg_map = bpf_object__find_map_by_name(obj, "broker_config");
+    if (!cfg_map) {
+        fprintf(stderr, "Failed to find map broker_config in %s\n", obj_path);
+        bpf_object__close(obj);
+        return res;
+    }
+
     res.prog_fd = bpf_program__fd(prog);
     res.map_fd = bpf_map__fd(map);
+    res.cfg_fd = bpf_map__fd(cfg_map);
     res.obj = obj;
 
-    if (res.prog_fd < 0 || res.map_fd < 0) {
-        fprintf(stderr, "Failed to get program or map fd from %s\n", obj_path);
+    if (res.prog_fd < 0 || res.map_fd < 0 || res.cfg_fd < 0) {
+        fprintf(stderr, "Failed to get program/map/config fd from %s\n", obj_path);
         bpf_object__close(obj);
         res.prog_fd = -1;
         res.map_fd = -1;
+        res.cfg_fd = -1;
+        res.obj = NULL;
+        return res;
+    }
+
+    uint8_t if_mac[6];
+    if (get_interface_mac(ifname, if_mac) < 0) {
+        fprintf(stderr, "Failed to get MAC for interface %s\n", ifname);
+        bpf_object__close(obj);
+        res.prog_fd = -1;
+        res.map_fd = -1;
+        res.cfg_fd = -1;
+        res.obj = NULL;
+        return res;
+    }
+
+    union bpf_attr attr;
+    memset(&attr, 0, sizeof(attr));
+    attr.map_fd = res.cfg_fd;
+    uint32_t cfg_key = 0;
+    struct {
+        uint32_t ifindex;
+        uint8_t mac[6];
+    } cfg_value;
+    cfg_value.ifindex = if_nametoindex(ifname);
+    memcpy(cfg_value.mac, if_mac, 6);
+    attr.key = (uint64_t)(unsigned long)&cfg_key;
+    attr.value = (uint64_t)(unsigned long)&cfg_value;
+    attr.flags = BPF_ANY;
+
+    if (sys_bpf(BPF_MAP_UPDATE_ELEM, &attr, sizeof(attr)) < 0) {
+        perror("Failed to populate broker_config");
+        bpf_object__close(obj);
+        res.prog_fd = -1;
+        res.map_fd = -1;
+        res.cfg_fd = -1;
         res.obj = NULL;
         return res;
     }
 
     printf("eBPF program loaded successfully with fd: %d\n", res.prog_fd);
     printf("eBPF map broker_map fd: %d\n", res.map_fd);
+    printf("eBPF map broker_config fd: %d\n", res.cfg_fd);
     return res;
 }
 
@@ -110,7 +216,7 @@ int add_key_if_not_exists(int map_fd, char key) {
     return 1;
 }
 
-int update_key(int map_fd, uint32_t key, char* ip_str, char* port_str) {
+int update_key(int map_fd, uint32_t key, char* ip_str, char* port_str, uint8_t mac[6]) {
     union bpf_attr attr;
     memset(&attr, 0, sizeof(attr));
 
@@ -136,6 +242,7 @@ int update_key(int map_fd, uint32_t key, char* ip_str, char* port_str) {
         return -1;
     }
     mv.port = port;
+    memcpy(mv.mac, mac, 6);
 
     attr.map_fd = map_fd;
     attr.key = (uint64_t)(unsigned long)&key;
@@ -152,6 +259,7 @@ int update_key(int map_fd, uint32_t key, char* ip_str, char* port_str) {
         return -1;
     }
 
-    printf("Key %u updated with %s:%u\n", key, ip_str, port);
+    printf("Key %u updated with %s:%u and MAC %02x:%02x:%02x:%02x:%02x:%02x\n",
+           key, ip_str, port, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
     return 0;
 }

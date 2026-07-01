@@ -6,7 +6,7 @@ var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
 // app.UseHttpsRedirection();
 
-var targetHost = Environment.GetEnvironmentVariable("SUBSCRIBER_HOST") ?? "localhost";
+var targetHost = Environment.GetEnvironmentVariable("BROKER_HOST") ?? "localhost";
 const int brokerPort = 10000;
 const int subscriberPort = 11000;
 

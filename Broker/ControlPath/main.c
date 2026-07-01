@@ -10,6 +10,8 @@
 #define PORT 10000
 #define BUFFER_SIZE 1024
 
+static const char *g_ifname = NULL;
+
 /*
     0 - Cria um novo map (publisher)
     1 - Atualiza um map existente (subscriber)
@@ -36,7 +38,22 @@ void update_existing_map(char* buffer, int* map_fd, char key, struct sockaddr_in
     printf("Client IP: %s, Port: %s\n", ip_str, port_str);
 
     uint32_t key_u32 = (uint32_t)(unsigned char)key;
-    update_key(*map_fd, key_u32, ip_str, port_str);
+    uint32_t ip = client_addr->sin_addr.s_addr;
+
+    uint8_t mac[6];
+    if ((ntohl(ip) & 0xff000000) == 0x7f000000) {
+        // XDP_PASS delivers loopback traffic to the local IP stack; no L2
+        // rewrite is needed.
+        memset(mac, 0, sizeof(mac));
+    } else {
+        if (get_arp_mac(g_ifname, ip, mac) < 0) {
+            fprintf(stderr, "Failed to resolve MAC for %s\n", ip_str);
+            return;
+        }
+    }
+    printf("Client MAC: %02x:%02x:%02x:%02x:%02x:%02x\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
+    update_key(*map_fd, key_u32, ip_str, port_str, mac);
 }
 
 void setup_commands(char* buffer, int* map_fd, struct sockaddr_in* client_addr) {
@@ -103,9 +120,11 @@ int main(int argc, char* argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    struct load_result lr = load_prog("../DataPath/main.o");
-    if (lr.prog_fd < 0 || lr.map_fd < 0) {
-        fprintf(stderr, "Failed to load eBPF program and map\n");
+    g_ifname = argv[1];
+
+    struct load_result lr = load_prog("../DataPath/main.o", argv[1]);
+    if (lr.prog_fd < 0 || lr.map_fd < 0 || lr.cfg_fd < 0) {
+        fprintf(stderr, "Failed to load eBPF program, map and config\n");
         exit(EXIT_FAILURE);
     }
 
