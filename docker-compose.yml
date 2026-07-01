@@ -9,18 +9,6 @@ services:
     networks:
       - udp-net
 
-  # publisher:
-  #   container_name: publisher
-  #   build:
-  #     context: ./Publisher
-  #   image: publisher:latest
-  #   environment:
-  #     - SUBSCRIBER_HOST=subscriber
-  #   depends_on:
-  #     - subscriber
-  #   networks:
-  #     - udp-net
-
 networks:
   udp-net:
     driver: bridge
