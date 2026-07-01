@@ -7,9 +7,9 @@
 #define MAP_VALUE_SIZE 8
 
 struct map_value {
-    uint32_t ip;           // IPv4 em network byte order (via inet_pton)
-    uint16_t port;          // porta
-    uint8_t  padding[2];    // reservado para uso futuro
+    uint32_t ip;
+    uint16_t port;
+    uint8_t  padding[2];
 };
 
 int create_map(void);
