@@ -16,7 +16,7 @@ struct {
     __type(key, __u8);
     __type(value, struct map_value);
     __uint(max_entries, 1024);
-} map SEC(".maps");
+} broker_map SEC(".maps");
 
 SEC("xdp")
 int xdp_udp_prog(struct xdp_md *ctx) {
@@ -47,7 +47,7 @@ int xdp_udp_prog(struct xdp_md *ctx) {
     }
 
     unsigned char *payload = (unsigned char *)(udph + 1);
-    if (payload + 1 > (unsigned char *)data_end) {
+    if (payload + 2 > (unsigned char *)data_end) {
         return XDP_PASS;
     }
 
@@ -58,11 +58,10 @@ int xdp_udp_prog(struct xdp_md *ctx) {
     
     char key = payload[1];
 
-    struct map_value *value = bpf_map_lookup_elem(&map, &key);
+    struct map_value *value = bpf_map_lookup_elem(&broker_map, &key);
     if (value) {
         __u8 *ip_bytes = (__u8 *)&value->ip;
-        bpf_printk("Match key=0x%x ip=%u.%u.%u.%u\n", key, ip_bytes[0], ip_bytes[1], ip_bytes[2]);
-        bpf_printk("ip_last=%u port=%u\n", ip_bytes[3], value->port);
+        bpf_printk("Match key=0x%x ip=%u.%u.%u.%u port=%u\n", key, ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3], value->port);
     } else {
         bpf_printk("No match for key=0x%x\n", key);
     }

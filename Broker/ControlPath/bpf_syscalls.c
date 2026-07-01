@@ -14,102 +14,53 @@ static inline int sys_bpf(int cmd, union bpf_attr *attr, unsigned int size) {
     return syscall(__NR_bpf, cmd, attr, size);
 }
 
-#define BPF_ALU64_IMM(OP, DST, IMM) \
-    ((struct bpf_insn){ .code = BPF_ALU64 | BPF_OP(OP) | BPF_K, \
-        .dst_reg = DST, .src_reg = 0, .off = 0, .imm = IMM })
-
-#define BPF_MOV64_IMM(DST, IMM) \
-    ((struct bpf_insn){ .code = BPF_ALU64 | BPF_MOV | BPF_K, \
-        .dst_reg = DST, .src_reg = 0, .off = 0, .imm = IMM })
-
-#define BPF_MOV64_REG(DST, SRC) \
-    ((struct bpf_insn){ .code = BPF_ALU64 | BPF_MOV | BPF_X, \
-        .dst_reg = DST, .src_reg = SRC, .off = 0, .imm = 0 })
-
-#define BPF_STX_MEM(SIZE, DST, SRC, OFF) \
-    ((struct bpf_insn){ .code = BPF_STX | BPF_SIZE(SIZE) | BPF_MEM, \
-        .dst_reg = DST, .src_reg = SRC, .off = OFF, .imm = 0 })
-
-#define BPF_JMP_IMM(OP, DST, IMM, OFF) \
-    ((struct bpf_insn){ .code = BPF_JMP | BPF_OP(OP) | BPF_K, \
-        .dst_reg = DST, .src_reg = 0, .off = OFF, .imm = IMM })
-
-#define BPF_RAW_INSN(CODE, DST, SRC, OFF, IMM) \
-    ((struct bpf_insn){ .code = CODE, .dst_reg = DST, .src_reg = SRC, \
-        .off = OFF, .imm = IMM })
-
-#define BPF_EXIT_INSN() \
-    ((struct bpf_insn){ .code = BPF_JMP | BPF_EXIT, \
-        .dst_reg = 0, .src_reg = 0, .off = 0, .imm = 0 })
-
-#define BPF_EMIT_CALL(FUNC) \
-    ((struct bpf_insn){ .code = BPF_JMP | BPF_CALL, \
-        .dst_reg = 0, .src_reg = 0, .off = 0, .imm = FUNC })
-
-#define BPF_LD_MAP_FD(DST, MAP_FD) \
-    BPF_RAW_INSN(BPF_LD | BPF_DW | BPF_IMM, DST, BPF_PSEUDO_MAP_FD, 0, MAP_FD), \
-    BPF_RAW_INSN(0, 0, 0, 0, 0)
-
 // ---------------------------------------------------------------------
 
-int create_map(void) {
-    union bpf_attr attr;
-    memset(&attr, 0, sizeof(attr));
+struct load_result load_prog(const char *obj_path) {
+    struct load_result res = { -1, -1, NULL };
 
-    attr.map_type = BPF_MAP_TYPE_HASH;
-    attr.key_size = sizeof(char);
-    attr.value_size = sizeof(struct map_value);
-    attr.max_entries = 1024;
-
-    strncpy(attr.map_name, "pkt_count_map", sizeof(attr.map_name) - 1);
-
-    int map_fd = sys_bpf(BPF_MAP_CREATE, &attr, sizeof(attr));
-    if (map_fd < 0) {
-        perror("BPF_MAP_CREATE failed");
-        return -1;
+    struct bpf_object *obj = bpf_object__open_file(obj_path, NULL);
+    if (!obj) {
+        fprintf(stderr, "Failed to open BPF object: %s\n", obj_path);
+        return res;
     }
 
-    printf("eBPF map created successfully with fd: %d\n", map_fd);
-    return map_fd;
-}
-
-int load_prog(int map_fd) {
-    struct bpf_insn prog[] = {
-        BPF_MOV64_IMM(BPF_REG_0, 1),
-        BPF_STX_MEM(BPF_W, BPF_REG_10, BPF_REG_0, -4),
-
-        BPF_MOV64_REG(BPF_REG_2, BPF_REG_10),
-        BPF_ALU64_IMM(BPF_ADD, BPF_REG_2, -4),
-
-        BPF_LD_MAP_FD(BPF_REG_1, map_fd),
-
-        BPF_EMIT_CALL(BPF_FUNC_map_lookup_elem),
-
-        BPF_MOV64_IMM(BPF_REG_0, 2),
-        BPF_EXIT_INSN(),
-    };
-    size_t insn_cnt = sizeof(prog) / sizeof(prog[0]);
-
-    union bpf_attr attr;
-    char log_buf[4096] = {0};
-    memset(&attr, 0, sizeof(attr));
-
-    attr.prog_type = BPF_PROG_TYPE_XDP;
-    attr.insns = (uint64_t)(unsigned long)prog;
-    attr.insn_cnt = insn_cnt;
-    attr.license = (uint64_t)(unsigned long)"GPL";
-    attr.log_buf = (uint64_t)(unsigned long)log_buf;
-    attr.log_size = sizeof(log_buf);
-    attr.log_level = 1;
-
-    int prog_fd = sys_bpf(BPF_PROG_LOAD, &attr, sizeof(attr));
-    if (prog_fd < 0) {
-        fprintf(stderr, "BPF_PROG_LOAD failed: %s\n%s\n", strerror(errno), log_buf);
-        return -1;
+    if (bpf_object__load(obj) != 0) {
+        fprintf(stderr, "Failed to load BPF object: %s\n", obj_path);
+        bpf_object__close(obj);
+        return res;
     }
 
-    printf("eBPF program loaded successfully with fd: %d\n", prog_fd);
-    return prog_fd;
+    struct bpf_program *prog = bpf_object__find_program_by_name(obj, "xdp_udp_prog");
+    if (!prog) {
+        fprintf(stderr, "Failed to find program xdp_udp_prog in %s\n", obj_path);
+        bpf_object__close(obj);
+        return res;
+    }
+
+    struct bpf_map *map = bpf_object__find_map_by_name(obj, "broker_map");
+    if (!map) {
+        fprintf(stderr, "Failed to find map broker_map in %s\n", obj_path);
+        bpf_object__close(obj);
+        return res;
+    }
+
+    res.prog_fd = bpf_program__fd(prog);
+    res.map_fd = bpf_map__fd(map);
+    res.obj = obj;
+
+    if (res.prog_fd < 0 || res.map_fd < 0) {
+        fprintf(stderr, "Failed to get program or map fd from %s\n", obj_path);
+        bpf_object__close(obj);
+        res.prog_fd = -1;
+        res.map_fd = -1;
+        res.obj = NULL;
+        return res;
+    }
+
+    printf("eBPF program loaded successfully with fd: %d\n", res.prog_fd);
+    printf("eBPF map broker_map fd: %d\n", res.map_fd);
+    return res;
 }
 
 int attach_xdp_link(int prog_fd, int ifindex) {

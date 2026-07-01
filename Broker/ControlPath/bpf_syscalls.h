@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <linux/bpf.h>
+#include <bpf/libbpf.h>
 
 #define MAP_VALUE_SIZE 8
 
@@ -12,9 +13,13 @@ struct map_value {
     uint8_t  padding[2];
 };
 
-int create_map(void);
+struct load_result {
+    int prog_fd;
+    int map_fd;
+    struct bpf_object *obj;
+};
 
-int load_prog(int map_fd);
+struct load_result load_prog(const char *obj_path);
 
 int attach_xdp_link(int prog_fd, int ifindex);
 

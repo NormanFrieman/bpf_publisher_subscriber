@@ -103,24 +103,21 @@ int main(int argc, char* argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    int map_fd = create_map();
-    if (map_fd < 0) {
-        fprintf(stderr, "Failed to create eBPF map\n");
+    struct load_result lr = load_prog("../DataPath/main.o");
+    if (lr.prog_fd < 0 || lr.map_fd < 0) {
+        fprintf(stderr, "Failed to load eBPF program and map\n");
         exit(EXIT_FAILURE);
     }
-    
-    int prog_fd = load_prog(map_fd);
-    if (prog_fd < 0) {
-        close(map_fd);
-        fprintf(stderr, "Failed to load eBPF program\n");
-        exit(EXIT_FAILURE);
-    }
+
+    int map_fd = lr.map_fd;
+    int prog_fd = lr.prog_fd;
 
     int ifindex = if_nametoindex(argv[1]);
     if (ifindex == 0) {
         perror("if_nametoindex failed");
         close(prog_fd);
         close(map_fd);
+        bpf_object__close(lr.obj);
         exit(EXIT_FAILURE);
     }
 
@@ -128,6 +125,7 @@ int main(int argc, char* argv[]) {
     if (link_fd < 0) {
         close(prog_fd);
         close(map_fd);
+        bpf_object__close(lr.obj);
         fprintf(stderr, "Failed to attach eBPF program to interface\n");
         exit(EXIT_FAILURE);
     }
@@ -143,6 +141,7 @@ int main(int argc, char* argv[]) {
     close(link_fd);
     close(prog_fd);
     close(map_fd);
+    bpf_object__close(lr.obj);
 
     return 0;
 }
