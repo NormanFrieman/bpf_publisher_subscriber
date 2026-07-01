@@ -1,21 +1,16 @@
-TARGET = main
-BPF_OBJ = $(TARGET).o
-BPF_SRC = $(TARGET).c
+CC = clang
+CFLAGS = -O2 -Wall -target bpf -g -I/usr/include/$(shell uname -m)-linux-gnu
+TARGET = main.o
 
 INTERFACE ?= lo
 
-CLANG = clang
-CFLAGS = -O2 -target bpf -g
+all: $(TARGET)
 
-.PHONY: all clean load unload reload
+$(TARGET): main.c
+	$(CC) $(CFLAGS) -c main.c -o $(TARGET)
 
-all: $(BPF_OBJ)
-
-$(BPF_OBJ): $(BPF_SRC)
-	$(CLANG) $(CFLAGS) -c $< -o $@
-
-load: $(BPF_OBJ)
-	sudo ip link set dev $(INTERFACE) xdp obj $(BPF_OBJ) sec xdp
+load: $(TARGET)
+	sudo ip link set dev $(INTERFACE) xdp obj $(TARGET) sec xdp
 
 unload:
 	sudo ip link set dev $(INTERFACE) xdp off
@@ -23,4 +18,6 @@ unload:
 reload: unload load
 
 clean:
-	rm -f $(BPF_OBJ)
+	rm -f *.o
+
+.PHONY: all clean load unload reload
