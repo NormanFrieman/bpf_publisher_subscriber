@@ -51,7 +51,12 @@ int xdp_udp_prog(struct xdp_md *ctx) {
         return XDP_PASS;
     }
 
-    char key = payload[0];
+    char command = payload[0];
+    if (command != '2') {
+        return XDP_PASS;
+    }
+    
+    char key = payload[1];
 
     struct map_value *value = bpf_map_lookup_elem(&map, &key);
     if (value) {
