@@ -42,8 +42,6 @@ void update_existing_map(char* buffer, int* map_fd, char key, struct sockaddr_in
 
     uint8_t mac[6];
     if ((ntohl(ip) & 0xff000000) == 0x7f000000) {
-        // XDP_PASS delivers loopback traffic to the local IP stack; no L2
-        // rewrite is needed.
         memset(mac, 0, sizeof(mac));
     } else {
         if (get_arp_mac(g_ifname, ip, mac) < 0) {
