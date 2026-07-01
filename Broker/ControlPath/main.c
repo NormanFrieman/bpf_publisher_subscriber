@@ -51,6 +51,7 @@ void setup_commands(char* buffer, int* map_fd, struct sockaddr_in* client_addr) 
             break;
         case '2':
             printf("\nCommand 2 received: message publishing\n");
+            printf("If you see this message, it means the publisher failed.\n");
             break;
         default:
             printf("Unknown command received: %c\n", buffer[0]);
