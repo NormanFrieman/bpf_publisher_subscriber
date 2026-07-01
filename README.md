@@ -9,3 +9,6 @@ Para acompanhar os logs do subscriber em tempo real
 
 Visualizar o map
 ```sudo bpftool map dump name pkt_count_map```
+
+Para acompanhar os logs do data path em tempo real
+```sudo cat /sys/kernel/debug/tracing/trace_pipe```
