@@ -4,6 +4,9 @@ Nome da interface
 Execução do broker control path
 ```sudo ./xdp_manual <INTERFACE>```
 
+Utilizar interface de loopback
+```sudo ./xdp_manual lo```
+
 Para acompanhar os logs do subscriber em tempo real
 ```docker compose logs -f subscriber```
 

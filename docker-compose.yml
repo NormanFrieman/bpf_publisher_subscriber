@@ -4,11 +4,17 @@ services:
     build:
       context: ./Subscriber
     image: subscriber:latest
-    ports:
-      - "11000:11000/udp"
-    networks:
-      - udp-net
+    network_mode: host
+    environment:
+      - BROKER_HOST=127.0.0.1
 
-networks:
-  udp-net:
-    driver: bridge
+  publisher:
+    container_name: publisher
+    build:
+      context: ./Publisher
+    image: publisher:latest
+    network_mode: host
+    environment:
+      - ASPNETCORE_URLS=http://+:5000
+      - BROKER_HOST=127.0.0.1
+      - SUBSCRIBER_HOST=127.0.0.1
